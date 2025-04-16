@@ -1,0 +1,36 @@
+<launch>
+
+  <!-- Publish the static transform from base_link to laser_link -->
+  <!-- Args: x y z yaw pitch roll parent_frame child_frame period_in_ms -->
+  <!-- Note: some versions might take qx qy qz qw instead of yaw pitch roll -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_laser_broadcaster"
+        args="0.1 0.0 0.0 0.0 0.0 0.0 base_link laser_link" />
+        <!-- Adjust the 0.1 0.0 0.0 0.0 0.0 0.0 values! -->
+
+  <!-- Start the URG Node -->
+  <node pkg="urg_node" type="urg_node" name="urg_node">
+      <param name="port" value="/dev/ttyACM0"/> <!-- Or use ip_address -->
+      <!-- *** Crucial: Set frame_id to match the child_frame above *** -->
+      <param name="frame_id" value="laser_link"/>
+      <!-- Other urg_node params if needed -->
+  </node>
+
+  <!-- Start the DWA Planner -->
+  <node pkg="dwa_planner" type="dwa_planner_node" name="dwa_planner">
+      <!-- *** Crucial: Set robot_frame to match the parent_frame above *** -->
+      <param name="robot_frame" value="base_link"/>
+      <!-- Set the global frame (often from odometry) -->
+      <param name="global_frame" value="odom"/>
+      <!-- Set DWAPlanner to use scan data -->
+      <param name="use_scan_as_input" value="true"/>
+      <!-- Add other necessary DWAPlanner parameters -->
+      <param name="max_velocity" value="0.5"/>
+      <param name="predict_time" value="2.0"/>
+      <!-- ... etc ... -->
+  </node>
+
+  <!-- You might also need a fake odometry publisher if you don't have one -->
+  <!-- And RViz for visualization -->
+  <node type="rviz" name="rviz" pkg="rviz"/>
+
+</launch>

@@ -4,13 +4,13 @@
 #include <string>
 #include <utility>
 #include <vector>
-
+#include <limits>
 #include "dwa_planner/dwa_planner.h"
-
+#include <std_msgs/Int32.h> 
 DWAPlanner::DWAPlanner(void)
     : local_nh_("~"), odom_updated_(false), local_map_updated_(false), scan_updated_(false), has_reached_(false),
       use_speed_cost_(false), odom_not_subscribe_count_(0), local_map_not_subscribe_count_(0),
-      scan_not_subscribe_count_(0)
+      scan_not_subscribe_count_(0),social_(0.0f)
 {
   load_params();
 
@@ -29,9 +29,9 @@ DWAPlanner::DWAPlanner(void)
   goal_sub_ = nh_.subscribe("/move_base_simple/goal", 1, &DWAPlanner::goal_callback, this);
   local_map_sub_ = nh_.subscribe("/local_map", 1, &DWAPlanner::local_map_callback, this);
   odom_sub_ = nh_.subscribe("/odom", 1, &DWAPlanner::odom_callback, this);
-  scan_sub_ = nh_.subscribe("/scan", 1, &DWAPlanner::scan_callback, this);
+  scan_sub_ = nh_.subscribe("/lidar/scan", 1, &DWAPlanner::scan_callback, this);
   target_velocity_sub_ = nh_.subscribe("/target_velocity", 1, &DWAPlanner::target_velocity_callback, this);
-
+  social_sub_ = nh_.subscribe("/gemini/social",1, &DWAPlanner::social_callback,this);
   if (!use_footprint_)
     footprint_ = geometry_msgs::PolygonStamped();
   if (!use_path_cost_)
@@ -62,15 +62,15 @@ void DWAPlanner::Window::show(void)
   ROS_INFO_STREAM("\t\tmin: " << min_yawrate_);
 }
 
-DWAPlanner::Cost::Cost(void) : obs_cost_(0.0), to_goal_cost_(0.0), speed_cost_(0.0), path_cost_(0.0), total_cost_(0.0)
+DWAPlanner::Cost::Cost(void) : obs_cost_(0.0), to_goal_cost_(0.0), speed_cost_(0.0), path_cost_(0.0), social_cost_(0.0), total_cost_(0.0)
 {
 }
 
 DWAPlanner::Cost::Cost(
     const float obs_cost, const float to_goal_cost, const float speed_cost, const float path_cost,
-    const float total_cost)
+    const float social_cost)
     : obs_cost_(obs_cost), to_goal_cost_(to_goal_cost), speed_cost_(speed_cost), path_cost_(path_cost),
-      total_cost_(total_cost)
+      social_cost_(social_cost), total_cost_(0.0) 
 {
 }
 
@@ -81,9 +81,10 @@ void DWAPlanner::Cost::show(void)
   ROS_INFO_STREAM("\tGoal cost: " << to_goal_cost_);
   ROS_INFO_STREAM("\tSpeed cost: " << speed_cost_);
   ROS_INFO_STREAM("\tPath cost: " << path_cost_);
+  ROS_INFO_STREAM("\tSocial cost: " << social_cost_);
 }
 
-void DWAPlanner::Cost::calc_total_cost(void) { total_cost_ = obs_cost_ + to_goal_cost_ + speed_cost_ + path_cost_; }
+void DWAPlanner::Cost::calc_total_cost(void) { total_cost_ = obs_cost_ + to_goal_cost_ + speed_cost_ + path_cost_ + social_cost_; }
 
 void DWAPlanner::goal_callback(const geometry_msgs::PoseStampedConstPtr &msg)
 {
@@ -124,7 +125,12 @@ void DWAPlanner::odom_callback(const nav_msgs::OdometryConstPtr &msg)
   odom_not_subscribe_count_ = 0;
   odom_updated_ = true;
 }
+void DWAPlanner::social_callback(const std_msgs::Int32ConstPtr &msg)
+{
+  social_ = msg->data;
+  ROS_INFO("Received social value: %d", social_);
 
+}
 void DWAPlanner::target_velocity_callback(const geometry_msgs::TwistConstPtr &msg)
 {
   target_velocity_ = std::min(msg->linear.x, max_velocity_);
@@ -166,7 +172,8 @@ void DWAPlanner::edge_on_global_path_callback(const nav_msgs::PathConstPtr &msg)
 std::vector<DWAPlanner::State>
 DWAPlanner::dwa_planning(const Eigen::Vector3d &goal, std::vector<std::pair<std::vector<State>, bool>> &trajectories)
 {
-  Cost min_cost(0.0, 0.0, 0.0, 0.0, 1e6);
+  Cost min_cost(0.0, 0.0, 0.0, 0.0, 0.0);
+  min_cost.total_cost_ = std::numeric_limits<float>::max();
   const Window dynamic_window = calc_dynamic_window();
   std::vector<State> best_traj;
   best_traj.resize(sim_time_samples_);
@@ -239,12 +246,20 @@ DWAPlanner::dwa_planning(const Eigen::Vector3d &goal, std::vector<std::pair<std:
         costs[i].obs_cost_ *= obs_cost_gain_;
         costs[i].speed_cost_ *= speed_cost_gain_;
         costs[i].path_cost_ *= path_cost_gain_;
+        costs[i].social_cost_ *= social_cost_gain_;
         costs[i].calc_total_cost();
+        //ROS_INFO("total cost total=%.4f min total = %.4f",costs[i].total_cost_,min_cost.total_cost_);
         if (costs[i].total_cost_ < min_cost.total_cost_)
         {
+          //ROS_INFO("New best cost: Total=%.4f (Obs=%.4f, Goal=%.4f, Speed=%.4f, Path=%.4f, Social=%.4d)",
+          //   costs[i].total_cost_, costs[i].obs_cost_, costs[i].to_goal_cost_,
+           //  costs[i].speed_cost_, costs[i].path_cost_, costs[i].social_cost_);
           min_cost = costs[i];
           best_traj = trajectories[i].first;
         }
+      }
+      else{
+        ROS_ERROR_THROTTLE(1.0, "No available obs_cost_");
       }
     }
   }
@@ -423,7 +438,7 @@ geometry_msgs::Twist DWAPlanner::calc_cmd_vel(void)
   visualize_footprints(best_traj.first, predict_footprints_pub_);
 
   use_speed_cost_ = false;
-
+  ROS_INFO("Goal in %s frame: x=%.2f, y=%.2f, yaw=%.2f", robot_frame_.c_str(), goal.x(), goal.y(), goal(2));
   return cmd_vel;
 }
 
@@ -500,7 +515,7 @@ float DWAPlanner::calc_obs_cost(const std::vector<State> &traj)
 float DWAPlanner::calc_speed_cost(const std::vector<State> &traj)
 {
   if (!use_speed_cost_)
-    return 0.0;
+    return 0.0f;
   const Window dynamic_window = calc_dynamic_window();
   return dynamic_window.max_velocity_ - traj.front().velocity_;
 }
@@ -508,11 +523,13 @@ float DWAPlanner::calc_speed_cost(const std::vector<State> &traj)
 float DWAPlanner::calc_path_cost(const std::vector<State> &traj)
 {
   if (!use_path_cost_)
-    return 0.0;
+    return 0.0f;
   else
     return calc_dist_to_path(traj.back());
 }
-
+int DWAPlanner::calc_social_cost(const std::vector<State>& traj){
+  return social_;
+}
 float DWAPlanner::calc_dist_to_path(const State state)
 {
   geometry_msgs::Point edge_point1 = edge_points_on_path_.value().poses.front().pose.position;
@@ -559,6 +576,7 @@ DWAPlanner::Cost DWAPlanner::evaluate_trajectory(const std::vector<State> &traje
   cost.obs_cost_ = calc_obs_cost(trajectory);
   cost.speed_cost_ = calc_speed_cost(trajectory);
   cost.path_cost_ = calc_path_cost(trajectory);
+  cost.social_cost_ = static_cast<float>(calc_social_cost(trajectory));
   cost.calc_total_cost();
   return cost;
 }

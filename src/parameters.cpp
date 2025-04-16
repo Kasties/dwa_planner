@@ -44,6 +44,7 @@ void DWAPlanner::load_params(void)
   local_nh_.param<double>("SLOW_VELOCITY_TH", slow_velocity_th_, 0.1);
   local_nh_.param<double>("SPEED_COST_GAIN", speed_cost_gain_, 0.4);
   local_nh_.param<int>("SUBSCRIBE_COUNT_TH", subscribe_count_th_, 3);
+  local_nh_.param<double>("social_cost_gain", social_cost_gain_, 1.0);
   // - T -
   local_nh_.param<double>("TARGET_VELOCITY", target_velocity_, 0.55);
   local_nh_.param<double>("TO_GOAL_COST_GAIN", to_goal_cost_gain_, 0.8);
@@ -100,6 +101,7 @@ void DWAPlanner::print_params(void)
   ROS_INFO_STREAM("SLOW_VELOCITY_TH: " << slow_velocity_th_);
   ROS_INFO_STREAM("SPEED_COST_GAIN: " << speed_cost_gain_);
   ROS_INFO_STREAM("SUBSCRIBE_COUNT_TH: " << subscribe_count_th_);
+  ROS_INFO_STREAM("social_cost_gain: " << social_cost_gain_);
   // - T -
   ROS_INFO_STREAM("TARGET_VELOCITY: " << target_velocity_);
   ROS_INFO_STREAM("TO_GOAL_COST_GAIN: " << to_goal_cost_gain_);
